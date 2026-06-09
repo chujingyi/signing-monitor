@@ -1,0 +1,7 @@
+{
+  "campaign_id": "20260527_nct_wish_hk3_4013",
+  "name": "NCT WISH HK场3 线下签名会",
+  "prod_ids": ["4013", "4014", "4015"],
+  "poll_interval_seconds": 60,
+  "stop_monitor_at": "2026-05-29T23:59:00+08:00"
+}

@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signing Monitor Dashboard</title>
+<style>
+  :root {
+    --bg: #f8f9fa;
+    --card: #fff;
+    --border: #e9ecef;
+    --text: #212529;
+    --text2: #6c757d;
+    --accent: #4f46e5;
+    --accent-light: #eef2ff;
+    --green: #16a34a;
+    --green-light: #f0fdf4;
+    --yellow: #ca8a04;
+    --yellow-light: #fefce8;
+    --red: #dc2626;
+    --red-light: #fef2f2;
+    --radius: 10px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+
+  /* Header */
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .header h1 { font-size: 22px; font-weight: 600; }
+  .header-right { display: flex; gap: 8px; align-items: center; }
+  .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); cursor: pointer; font-size: 13px; transition: all .15s; }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn-primary:hover { opacity: .9; }
+  .btn-sm { padding: 3px 8px; font-size: 12px; }
+  .btn-danger { color: var(--red); border-color: var(--red); }
+  .btn-danger:hover { background: var(--red); color: #fff; }
+
+  /* Stats */
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+  .stat-card { background: var(--card); border-radius: var(--radius); padding: 16px; border: 1px solid var(--border); }
+  .stat-card .label { font-size: 12px; color: var(--text2); margin-bottom: 4px; }
+  .stat-card .value { font-size: 24px; font-weight: 600; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 2px solid var(--border); padding-bottom: 0; }
+  .tab { padding: 8px 16px; cursor: pointer; font-size: 13px; color: var(--text2); border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all .15s; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 500; }
+  .tab .badge { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; text-align: center; border-radius: 9px; font-size: 11px; margin-left: 4px; padding: 0 5px; }
+  .tab .badge-green { background: var(--green-light); color: var(--green); }
+
+  /* Section */
+  .section { margin-bottom: 24px; }
+  .section-header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; cursor: pointer; }
+  .section-header h2 { font-size: 15px; font-weight: 500; }
+  .section-header .count { font-size: 12px; color: var(--text2); }
+  .section-header .arrow { font-size: 12px; transition: transform .2s; }
+  .section-header .arrow.collapsed { transform: rotate(-90deg); }
+
+  /* Campaign cards */
+  .cards { display: flex; flex-direction: column; gap: 10px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; transition: box-shadow .15s; }
+  .card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+  .card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .card-left { flex: 1; min-width: 0; }
+  .card-title { font-size: 14px; font-weight: 500; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+  .card-meta { font-size: 12px; color: var(--text2); display: flex; flex-wrap: wrap; gap: 12px; }
+  .card-meta span { display: inline-flex; align-items: center; gap: 3px; }
+  .card-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; align-items: flex-start; }
+
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; margin-top: 2px; }
+  .status-dot.green { background: var(--green); }
+  .status-dot.yellow { background: var(--yellow); }
+  .status-dot.red { background: var(--red); }
+
+  .platform-tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; font-weight: 500; }
+  .platform-tag.kms { background: #fce7f3; color: #be185d; }
+  .platform-tag.k4 { background: #dbeafe; color: #1d4ed8; }
+  .platform-tag.imini { background: #f3e8ff; color: #7c3aed; }
+  .tag-scan-only { font-size: 10px; padding: 1px 5px; border-radius: 3px; background: #fef3c7; color: #92400e; }
+
+  /* Deadline picker */
+  .deadline-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; color: var(--text2); }
+  .deadline-row input[type="datetime-local"] { font-size: 12px; padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; }
+
+  /* Log list */
+  .log-list { margin-top: 8px; }
+  .log-item { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 2px 8px; background: var(--bg); border-radius: 4px; margin: 2px 4px 2px 0; }
+  .log-item a { color: var(--accent); text-decoration: none; }
+  .log-item a:hover { text-decoration: underline; }
+  .log-size { color: var(--text2); font-size: 11px; }
+
+  /* Modal */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 1000; align-items: center; justify-content: center; }
+  .modal-overlay.show { display: flex; }
+  .modal { background: var(--card); border-radius: 12px; width: 90%; max-width: 800px; max-height: 80vh; display: flex; flex-direction: column; }
+  .modal-header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .modal-header h3 { font-size: 15px; font-weight: 500; }
+  .modal-close { background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text2); }
+  .modal-body { padding: 16px 18px; overflow-y: auto; flex: 1; }
+
+  /* Table for JSON Lines */
+  .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .data-table th { background: var(--bg); text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-weight: 500; white-space: nowrap; }
+  .data-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .data-table tr:hover td { background: var(--accent-light); }
+  .pos { color: var(--green); font-weight: 500; }
+  .neg { color: var(--red); font-weight: 500; }
+
+  /* Text log preview */
+  .log-text { font-family: "SF Mono", Menlo, monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+
+  /* Loading */
+  .loading { text-align: center; padding: 40px; color: var(--text2); }
+
+  /* Empty */
+  .empty { text-align: center; padding: 30px; color: var(--text2); font-size: 13px; }
+
+  /* Auth login overlay */
+  .auth-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 2000; display: flex; align-items: center; justify-content: center; }
+  .auth-box { background: var(--card); border-radius: var(--radius); padding: 32px; width: 360px; border: 1px solid var(--border); }
+  .auth-box h2 { font-size: 18px; margin-bottom: 16px; }
+  .auth-box input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; margin-bottom: 12px; box-sizing: border-box; }
+  .auth-box .error { color: var(--red); font-size: 13px; margin-bottom: 8px; display: none; }
+
+  @media (max-width: 640px) {
+    .stats { grid-template-columns: 1fr; }
+    .card-top { flex-direction: column; }
+    .card-actions { justify-content: flex-start; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Auth login overlay (only shown when DASHBOARD_TOKEN is set) -->
+{% if auth_token %}
+<div class="auth-overlay" id="authOverlay" style="display:none;">
+  <div class="auth-box">
+    <h2>Signing Monitor</h2>
+    <div class="error" id="authError">Token 错误，请重试</div>
+    <input type="password" id="authInput" placeholder="请输入访问 Token" autocomplete="off">
+    <button class="btn btn-primary" style="width:100%" onclick="doLogin()">登 录</button>
+  </div>
+</div>
+{% endif %}
+
+<div class="container">
+  <div class="header">
+    <h1>Signing Monitor Dashboard</h1>
+    <div class="header-right">
+      <button class="btn" onclick="loadStatus()" id="refreshBtn">刷新</button>
+    </div>
+  </div>
+
+  <div class="stats" id="stats">
+    <div class="stat-card"><div class="label">监控中</div><div class="value" id="activeCount">-</div></div>
+    <div class="stat-card"><div class="label">已结束</div><div class="value" id="expiredCount">-</div></div>
+    <div class="stat-card"><div class="label">总计</div><div class="value" id="totalCount">-</div></div>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <div class="tab active" data-platform="all" onclick="switchTab('all')">全部</div>
+    <div class="tab" data-platform="kms" onclick="switchTab('kms')">KMS <span class="badge badge-green" id="kmsBadge">0</span></div>
+    <div class="tab" data-platform="k4" onclick="switchTab('k4')">K4 <span class="badge badge-green" id="k4Badge">0</span></div>
+    <div class="tab" data-platform="imini" onclick="switchTab('imini')">imini <span class="badge badge-green" id="iminiBadge">0</span></div>
+  </div>
+
+  <div class="section" id="activeSection">
+    <div class="section-header" onclick="toggleSection('active')">
+      <span class="arrow" id="activeArrow">▼</span>
+      <h2>正在监控</h2>
+      <span class="count" id="activeLabel">0</span>
+    </div>
+    <div class="cards" id="activeCards"></div>
+  </div>
+
+  <div class="section" id="expiredSection">
+    <div class="section-header" onclick="toggleSection('expired')">
+      <span class="arrow" id="expiredArrow">▼</span>
+      <h2>历史活动</h2>
+      <span class="count" id="expiredLabel">0</span>
+    </div>
+    <div class="cards" id="expiredCards"></div>
+  </div>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modalTitle">详情</h3>
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<script>
+// ── Auth ────────────────────────────────────────────────────────────────────
+
+const AUTH_TOKEN_STORAGE_KEY = 'signing_monitor_token';
+const AUTH_REQUIRED = {{ 'true' if auth_token else 'false' }};
+
+function getStoredToken() {
+  return localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || '';
+}
+
+function authHeaders() {
+  const t = getStoredToken();
+  return t ? { 'Authorization': 'Bearer ' + t } : {};
+}
+
+function handleAuthError() {
+  if (!AUTH_REQUIRED) return;
+  localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+  document.getElementById('authOverlay').style.display = 'flex';
+}
+
+function doLogin() {
+  const input = document.getElementById('authInput');
+  const token = input.value.trim();
+  if (!token) return;
+  // 验证 token：发一个轻量请求
+  fetch('/api/status', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(r => {
+      if (r.ok) {
+        localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+        document.getElementById('authOverlay').style.display = 'none';
+        document.getElementById('authError').style.display = 'none';
+        loadStatus();
+      } else {
+        document.getElementById('authError').style.display = 'block';
+        input.select();
+      }
+    })
+    .catch(() => {
+      document.getElementById('authError').style.display = 'block';
+    });
+}
+
+// 如果需要认证，检查已存储的 token
+if (AUTH_REQUIRED) {
+  if (getStoredToken()) {
+    // 有 token，先验证是否有效（loadStatus 会处理 401）
+    loadStatus();
+  } else {
+    document.getElementById('authOverlay').style.display = 'flex';
+  }
+}
+
+// ── Core ─────────────────────────────────────────────────────────────────────
+
+let currentPlatform = 'all';
+let allData = null;
+
+function switchTab(platform) {
+  currentPlatform = platform;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.platform === platform));
+  render();
+}
+
+function toggleSection(id) {
+  const cards = document.getElementById(id + 'Cards');
+  const arrow = document.getElementById(id + 'Arrow');
+  if (cards.style.display === 'none') {
+    cards.style.display = '';
+    arrow.classList.remove('collapsed');
+  } else {
+    cards.style.display = 'none';
+    arrow.classList.add('collapsed');
+  }
+}
+
+function fmtSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function fmtDate(str) {
+  if (!str) return '未知';
+  try {
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) return d.toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'});
+  } catch {}
+  return str;
+}
+
+function filterByPlatform(list) {
+  if (currentPlatform === 'all') return list;
+  return list.filter(c => c.platform === currentPlatform);
+}
+
+function renderCard(c, isActive) {
+  const dotClass = isActive ? (c.remaining === '已截止' ? 'yellow' : 'green') : 'red';
+  const platformLabel = c.platform.toUpperCase();
+
+  let metaHtml = '';
+  metaHtml += `<span>开始: ${fmtDate(c.started_at) || '未知'}</span>`;
+  metaHtml += `<span>截止: ${fmtDate(c.stop_monitor_at)}</span>`;
+  metaHtml += `<span>剩余: ${c.remaining}</span>`;
+  if (c.pid) metaHtml += `<span>PID: ${c.pid}</span>`;
+  if (c.events && c.events.length > 0) metaHtml += `<span>类型: ${c.events.join(', ')}</span>`;
+  if (c.event_type) metaHtml += `<span>类型: ${c.event_type}</span>`;
+  if (c.status_text) metaHtml += `<span>状态: ${c.status_text}</span>`;
+  if (c.is_scan_only) metaHtml += `<span class="tag-scan-only">仅扫描记录</span>`;
+
+  let actionsHtml = '';
+  if (isActive) {
+    if (c.running) {
+      actionsHtml += `<button class="btn btn-sm btn-danger" onclick="doAction('${c.platform}','${c.campaign_id}','stop')">停止</button>`;
+    } else {
+      actionsHtml += `<button class="btn btn-sm btn-primary" onclick="doAction('${c.platform}','${c.campaign_id}','start')">启动</button>`;
+    }
+    actionsHtml += `<button class="btn btn-sm" onclick="doScan('${c.platform}')">扫描</button>`;
+  }
+  actionsHtml += `<button class="btn btn-sm" onclick="showReport('${c.platform}','${c.campaign_id}')">排序报告</button>`;
+  actionsHtml += `<button class="btn btn-sm btn-danger" onclick="deleteCampaign('${c.platform}','${c.campaign_id}','${escHtml(c.name)}')">删除</button>`;
+
+  // Deadline picker
+  let deadlineHtml = '';
+  if (!c.stop_monitor_at || c.remaining === '未设截止时间') {
+    // 默认日期为今天，时间 00:30
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    const defaultVal = `${yyyy}-${mm}-${dd}T00:30`;
+    deadlineHtml = `<div class="deadline-row">
+      <span>补充截止时间:</span>
+      <input type="datetime-local" id="dl-${c.campaign_id.replace(/[^a-zA-Z0-9]/g,'_')}" value="${defaultVal}">
+      <button class="btn btn-sm btn-primary" onclick="setDeadline('${c.platform}','${c.campaign_id}','${c.campaign_id.replace(/[^a-zA-Z0-9]/g,'_')}')">设置</button>
+    </div>`;
+  }
+
+  // Log files
+  let logHtml = '';
+  if (c.log_files && c.log_files.length > 0) {
+    logHtml = '<div class="log-list">';
+    for (const lf of c.log_files) {
+      logHtml += `<span class="log-item">
+        <a href="/api/log/${lf.token}" download>${lf.name}</a>
+        <span class="log-size">${fmtSize(lf.size)}</span>
+        <a href="#" onclick="previewLog('${lf.token}');return false;">预览</a>
+      </span>`;
+    }
+    logHtml += '</div>';
+  }
+
+  return `<div class="card">
+    <div class="card-top">
+      <div class="card-left">
+        <div class="card-title">
+          <span class="status-dot ${dotClass}"></span>
+          ${c.name}
+          <span class="platform-tag ${c.platform}">${platformLabel}</span>
+        </div>
+        <div class="card-meta">${metaHtml}</div>
+        ${deadlineHtml}
+        ${logHtml}
+      </div>
+      <div class="card-actions">${actionsHtml}</div>
+    </div>
+  </div>`;
+}
+
+function render() {
+  if (!allData) return;
+  const active = filterByPlatform(allData.active);
+  const expired = filterByPlatform(allData.expired);
+
+  document.getElementById('activeCount').textContent = allData.stats.active_count;
+  document.getElementById('expiredCount').textContent = allData.stats.expired_count;
+  document.getElementById('totalCount').textContent = allData.stats.active_count + allData.stats.expired_count;
+  document.getElementById('activeLabel').textContent = active.length;
+
+  const bp = allData.stats.by_platform;
+  document.getElementById('kmsBadge').textContent = (bp.kms?.active || 0);
+  document.getElementById('k4Badge').textContent = (bp.k4?.active || 0);
+  document.getElementById('iminiBadge').textContent = (bp.imini?.active || 0);
+
+  const ac = document.getElementById('activeCards');
+  ac.innerHTML = active.length ? active.map(c => renderCard(c, true)).join('') : '<div class="empty">暂无监控中的活动</div>';
+
+  const ec = document.getElementById('expiredCards');
+  ec.innerHTML = expired.length ? expired.map(c => renderCard(c, false)).join('') : '<div class="empty">暂无历史活动</div>';
+}
+
+async function loadStatus() {
+  const btn = document.getElementById('refreshBtn');
+  btn.textContent = '加载中...';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/status', { headers: authHeaders() });
+    if (res.status === 401) {
+      handleAuthError();
+      return;
+    }
+    allData = await res.json();
+    render();
+  } catch (e) {
+    console.error(e);
+  } finally {
+    btn.textContent = '刷新';
+    btn.disabled = false;
+  }
+}
+
+async function doAction(platform, campaignId, action) {
+  try {
+    const res = await fetch(`/api/action/${platform}/${encodeURIComponent(campaignId)}/${action}`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    if (res.status === 401) { handleAuthError(); return; }
+    const data = await res.json();
+    if (data.success) {
+      setTimeout(loadStatus, 500);
+    } else {
+      alert('操作失败: ' + (data.error || '未知错误'));
+    }
+  } catch (e) {
+    alert('请求失败: ' + e.message);
+  }
+}
+
+async function doScan(platform) {
+  if (!confirm(`确认立即扫描 ${platform.toUpperCase()} 平台？`)) return;
+  try {
+    const res = await fetch(`/api/scan/${platform}`, { method: 'POST', headers: authHeaders() });
+    if (res.status === 401) { handleAuthError(); return; }
+    const data = await res.json();
+    if (data.success) {
+      alert('扫描完成');
+      loadStatus();
+    } else {
+      alert('扫描失败: ' + (data.error || ''));
+    }
+  } catch (e) {
+    alert('请求失败: ' + e.message);
+  }
+}
+
+async function showReport(platform, campaignId) {
+  openModal('排序报告', '<div class="loading">加载中...</div>');
+  try {
+    const res = await fetch(`/api/report/${platform}/${encodeURIComponent(campaignId)}`, { headers: authHeaders() });
+    if (res.status === 401) { handleAuthError(); return; }
+    const data = await res.json();
+    if (data.error) {
+      document.getElementById('modalBody').innerHTML = `<p style="color:var(--red)">${data.error}</p>`;
+    } else {
+      let html = `<pre class="log-text">${escHtml(data.text)}</pre>`;
+      if (data.xlsx_token) {
+        html += `<div style="margin-top:12px"><a class="btn btn-primary" href="/api/log/${data.xlsx_token}" download>下载 Excel 报告</a></div>`;
+      }
+      document.getElementById('modalBody').innerHTML = html;
+    }
+  } catch (e) {
+    document.getElementById('modalBody').innerHTML = `<p style="color:var(--red)">加载失败: ${e.message}</p>`;
+  }
+}
+
+async function previewLog(token) {
+  openModal('日志预览', '<div class="loading">加载中...</div>');
+  try {
+    const res = await fetch(`/api/log_preview/${token}`, { headers: authHeaders() });
+    if (res.status === 401) { handleAuthError(); return; }
+    const data = await res.json();
+    if (data.error) {
+      document.getElementById('modalBody').innerHTML = `<p style="color:var(--red)">${data.error}</p>`;
+      return;
+    }
+    if (data.format === 'jsonl') {
+      renderJsonlTable(data);
+    } else {
+      const truncated = data.total > 500 ? `<p style="color:var(--text2);margin-bottom:8px;font-size:12px">显示前 500 行 / 共 ${data.total} 行</p>` : '';
+      document.getElementById('modalBody').innerHTML = truncated + `<pre class="log-text">${escHtml(data.lines.join('\n'))}</pre>`;
+    }
+  } catch (e) {
+    document.getElementById('modalBody').innerHTML = `<p style="color:var(--red)">加载失败: ${e.message}</p>`;
+  }
+}
+
+function renderJsonlTable(data) {
+  if (!data.records || data.records.length === 0) {
+    document.getElementById('modalBody').innerHTML = '<div class="empty">无数据</div>';
+    return;
+  }
+  const sample = data.records[0];
+  const cols = Object.keys(sample).filter(k => !k.startsWith('_'));
+  let html = `<p style="color:var(--text2);margin-bottom:8px;font-size:12px">${data.total} 条记录</p>`;
+  html += '<div style="overflow-x:auto"><table class="data-table"><thead><tr>';
+  for (const c of cols) html += `<th>${escHtml(c)}</th>`;
+  html += '</tr></thead><tbody>';
+  for (const r of data.records) {
+    html += '<tr>';
+    for (const c of cols) {
+      let val = r[c] ?? '';
+      let cls = '';
+      if (c === 'stockDiff' || c === 'delta') {
+        cls = val > 0 ? 'pos' : (val < 0 ? 'neg' : '');
+        val = (val > 0 ? '+' : '') + val;
+      }
+      html += `<td class="${cls}" title="${escHtml(String(val))}">${escHtml(String(val))}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table></div>';
+  document.getElementById('modalBody').innerHTML = html;
+}
+
+async function setDeadline(platform, campaignId, inputId) {
+  const input = document.getElementById('dl-' + inputId);
+  const val = input.value;
+  if (!val) { alert('请选择截止时间'); return; }
+  // Convert datetime-local to ISO
+  const deadline = val.replace('T', ' ') + ':00';
+  try {
+    const res = await fetch(`/api/deadline/${platform}/${encodeURIComponent(campaignId)}`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({deadline}),
+    });
+    if (res.status === 401) { handleAuthError(); return; }
+    const data = await res.json();
+    if (data.success) {
+      alert('截止时间已设置');
+      loadStatus();
+    } else {
+      alert('设置失败: ' + (data.error || ''));
+    }
+  } catch (e) {
+    alert('请求失败: ' + e.message);
+  }
+}
+
+async function deleteCampaign(platform, campaignId, name) {
+  if (!confirm(`⚠️ 确认删除活动？\n\n名称: ${name}\n平台: ${platform.toUpperCase()}\n\n此操作将删除该活动的所有数据（日志、排序报告、配置等），不可恢复！`)) return;
+  if (!confirm(`再次确认：真的要删除 "${name}" 的所有数据吗？此操作不可撤销！`)) return;
+  try {
+    const res = await fetch(`/api/delete/${platform}/${encodeURIComponent(campaignId)}`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    if (res.status === 401) { handleAuthError(); return; }
+    const data = await res.json();
+    if (data.success) {
+      alert('已删除');
+      loadStatus();
+    } else {
+      alert('删除失败: ' + (data.error || ''));
+    }
+  } catch (e) {
+    alert('请求失败: ' + e.message);
+  }
+}
+
+function openModal(title, bodyHtml) {
+  document.getElementById('modalTitle').textContent = title;
+  if (bodyHtml) document.getElementById('modalBody').innerHTML = bodyHtml;
+  document.getElementById('modal').classList.add('show');
+}
+
+function closeModal() {
+  document.getElementById('modal').classList.remove('show');
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// 登录框回车键支持
+document.getElementById('authInput')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+
+// Init (only when no auth required, or already authenticated)
+if (!AUTH_REQUIRED || getStoredToken()) {
+  loadStatus();
+}
+
+// Auto refresh every 30s
+setInterval(() => {
+  if (!AUTH_REQUIRED || getStoredToken()) {
+    loadStatus();
+  }
+}, 30000);
+</script>
+</body>
+</html>
