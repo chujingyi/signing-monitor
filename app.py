@@ -27,10 +27,17 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
 from flask import Flask, jsonify, request, send_file, render_template, abort
+from dotenv import load_dotenv
+
+from pathlib import Path
+BASE_DIR = Path(__file__).parent
+
+# 自动加载 .env 文件
+load_dotenv(BASE_DIR / ".env")
 
 TZ = ZoneInfo("Asia/Shanghai")
 
@@ -72,8 +79,7 @@ REMOTE_PATHS = {
     },
 }
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "templates"))
+app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
 
 # ── 认证 ──────────────────────────────────────────────────────────────────────
 
@@ -242,7 +248,10 @@ def _remaining_text(dt: datetime | None) -> str:
 
 _REMOTE_COLLECTOR_SCRIPT = r'''
 import json, os, subprocess, re
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
+
+HEARTBEAT_STALE_MINUTES = 10
 
 def get_active_pids():
     """获取所有监控进程的 PID 集合"""
@@ -258,6 +267,19 @@ def get_active_pids():
         return pids
     except:
         return set()
+
+def _is_heartbeat_alive(hb_updated_at: str) -> bool:
+    """判断心跳是否在 HEARTBEAT_STALE_MINUTES 分钟内"""
+    if not hb_updated_at:
+        return False
+    try:
+        dt = datetime.fromisoformat(hb_updated_at)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone(timedelta(hours=8)))
+        now = datetime.now(timezone.utc)
+        return (now - dt).total_seconds() < HEARTBEAT_STALE_MINUTES * 60
+    except:
+        return False
 
 def collect():
     active_pids = get_active_pids()
@@ -300,11 +322,6 @@ def collect():
                 for f in sorted(exports_dir.iterdir()):
                     if f.is_file() and f.stat().st_size > 0:
                         log_files.append({"name": f"exports/{f.name}", "path": str(f), "size": f.stat().st_size})
-            # runtime
-            for rname in ("monitor.stdout.log", "monitor.stderr.log"):
-                p = folder / "runtime" / rname
-                if p.exists() and p.stat().st_size > 0:
-                    log_files.append({"name": f"runtime/{rname}", "path": str(p), "size": p.stat().st_size})
 
             result["kms"].append({
                 "campaign_id": cfg.get("campaign_id", folder.name),
@@ -314,9 +331,10 @@ def collect():
                 "stop_monitor_at": cfg.get("stop_monitor_at", ""),
                 "publish_time": cfg.get("publish_time", ""),
                 "pid": pid,
-                "running": pid in active_pids,
+                "running": pid in active_pids or _is_heartbeat_alive(hb.get("updated_at", "")),
                 "heartbeat": hb.get("updated_at", ""),
                 "log_files": log_files,
+                "site_url": f"https://kms.kmstation.net/prod/prodInfo?prodId={cfg.get('prod_ids', [''])[0]}" if cfg.get("prod_ids") else "",
             })
 
     # K4
@@ -357,21 +375,19 @@ def collect():
                 for f in sorted(exports_dir.iterdir()):
                     if f.is_file() and f.stat().st_size > 0:
                         log_files.append({"name": f"exports/{f.name}", "path": str(f), "size": f.stat().st_size})
-            for rname in ("monitor.stdout.log", "monitor.stderr.log"):
-                p = folder / "runtime" / rname
-                if p.exists() and p.stat().st_size > 0:
-                    log_files.append({"name": f"runtime/{rname}", "path": str(p), "size": p.stat().st_size})
 
             result["k4"].append({
                 "campaign_id": cid,
                 "name": cfg.get("name", folder.name),
                 "events": list(cfg.get("events", {}).keys()),
+                "event_urls": {k: v if isinstance(v, list) else [v] for k, v in cfg.get("events", {}).items()},
                 "started_at": cfg.get("scanned_at", ""),
                 "stop_monitor_at": cfg.get("stop_monitor_at", ""),
                 "pid": pid,
-                "running": pid in active_pids,
+                "running": pid in active_pids or _is_heartbeat_alive(hb.get("updated_at", "")),
                 "heartbeat": hb.get("updated_at", ""),
                 "log_files": log_files,
+                "site_url": "",
             })
 
     # K4 events/ 目录扫描记录
@@ -390,6 +406,7 @@ def collect():
                     "campaign_id": cid,
                     "name": item.get("name", ""),
                     "events": list(item.get("events", {}).keys()),
+                    "event_urls": {k: v[0] if isinstance(v, list) and v else "" for k, v in item.get("events", {}).items()},
                     "started_at": item.get("scanned_at", ""),
                     "stop_monitor_at": item.get("stop_monitor_at", ""),
                     "pid": 0,
@@ -397,6 +414,7 @@ def collect():
                     "heartbeat": "",
                     "log_files": [],
                     "is_scan_only": True,
+                    "site_url": "",
                 })
 
     # imini
@@ -415,6 +433,10 @@ def collect():
             for f in sorted(folder.glob("*.log")):
                 if f.is_file() and f.stat().st_size > 0:
                     log_files.append({"name": f.name, "path": str(f), "size": f.stat().st_size})
+            # 同级合并排序文件
+            sort_file = imini_dir / f"{folder.name.rsplit('_', 1)[0]}_合并排序.log"
+            if sort_file.exists() and sort_file.is_file() and sort_file.stat().st_size > 0:
+                log_files.append({"name": f"sort/{sort_file.name}", "path": str(sort_file), "size": sort_file.stat().st_size})
 
             pro_id = info.get("pro_id", "")
             loaded_imini_ids.add(pro_id)
@@ -427,9 +449,10 @@ def collect():
                 "started_at": info.get("started_at", ""),
                 "stop_monitor_at": info.get("end_time", ""),
                 "pid": pid,
-                "running": pid in active_pids,
+                "running": pid in active_pids or _is_heartbeat_alive(info.get("heartbeat_at", "")),
                 "log_files": log_files,
                 "price": info.get("price", ""),
+                "site_url": f"https://www.imini.tv/wap_xingjunwenhua.html?pro_id={pro_id}" if pro_id else "",
             })
 
     # imini scan.log
@@ -458,6 +481,7 @@ def collect():
                 "status_text": status,
                 "price": price.strip(),
                 "is_scan_only": True,
+                "site_url": f"https://www.imini.tv/wap_xingjunwenhua.html?pro_id={pro_id}",
             })
 
     return result
@@ -527,6 +551,7 @@ def _kms_campaigns() -> list[dict]:
                 "running": item["running"],
                 "heartbeat": item.get("heartbeat", ""),
                 "log_files": log_files,
+                "site_url": item.get("site_url", ""),
             })
 
     return results
@@ -561,6 +586,8 @@ def _k4_campaigns() -> list[dict]:
                 "heartbeat": item.get("heartbeat", ""),
                 "log_files": log_files,
                 "is_scan_only": item.get("is_scan_only", False),
+                "site_url": item.get("site_url", ""),
+                "event_urls": item.get("event_urls", {}),
             })
 
     return results
@@ -598,6 +625,7 @@ def _imini_campaigns() -> list[dict]:
                 "event_type": item.get("event_type", ""),
                 "status_text": item.get("status_text", ""),
                 "is_scan_only": item.get("is_scan_only", False),
+                "site_url": item.get("site_url", ""),
             })
 
     return results
@@ -619,15 +647,28 @@ def api_status():
 
     all_campaigns = _kms_campaigns() + _k4_campaigns() + _imini_campaigns()
 
-    active = [c for c in all_campaigns if c["running"]]
-    expired = [c for c in all_campaigns if not c["running"]]
+    def _is_expired(c):
+        """根据截止时间判断是否过期"""
+        stop = c.get("stop_monitor_at", "")
+        if not stop:
+            return True  # 无截止时间视为过期
+        try:
+            stop_dt = datetime.fromisoformat(stop)
+            if stop_dt.tzinfo is None:
+                stop_dt = stop_dt.replace(tzinfo=timezone(timedelta(hours=8)))
+            return datetime.now(timezone.utc) >= stop_dt
+        except:
+            return True
+
+    active = [c for c in all_campaigns if not _is_expired(c)]
+    expired = [c for c in all_campaigns if _is_expired(c)]
 
     by_platform: dict[str, dict] = {}
     for c in all_campaigns:
         p = c["platform"]
         by_platform.setdefault(p, {"active": 0, "total": 0})
         by_platform[p]["total"] += 1
-        if c["running"]:
+        if not _is_expired(c):
             by_platform[p]["active"] += 1
 
     result = {
@@ -666,6 +707,35 @@ def api_log(token):
     return send_file(tmp_path, as_attachment=True, download_name=filename)
 
 
+def _preview_xlsx(remote_path: str):
+    """通过远程 openpyxl 解析 xlsx，返回按成员分 sheet 的结构化数据"""
+    script = f'''
+import json, sys
+import openpyxl
+wb = openpyxl.load_workbook("{remote_path}", read_only=True)
+result = []
+for sn in wb.sheetnames:
+    ws = wb[sn]
+    rows = []
+    for row in ws.iter_rows(values_only=True):
+        rows.append([str(c) if c is not None else "" for c in row])
+    result.append({{"name": sn, "rows": rows}})
+wb.close()
+print(json.dumps(result, ensure_ascii=False))
+'''
+    import base64
+    b64 = base64.b64encode(script.encode()).decode()
+    out, _, rc = ssh_exec(f"echo '{b64}' | base64 -d | python3", timeout=30)
+    if rc != 0 or not out.strip():
+        return jsonify({"error": "Excel 解析失败", "format": "binary", "filename": remote_path.rsplit("/", 1)[-1]})
+    try:
+        sheets = json.loads(out.strip())
+    except json.JSONDecodeError:
+        return jsonify({"error": "Excel 解析失败", "format": "binary", "filename": remote_path.rsplit("/", 1)[-1]})
+
+    return jsonify({"format": "xlsx", "sheets": sheets, "filename": remote_path.rsplit("/", 1)[-1]})
+
+
 @app.route("/api/log_preview/<token>")
 def api_log_preview(token):
     """在线预览日志"""
@@ -674,6 +744,14 @@ def api_log_preview(token):
         return jsonify({"error": "无效的文件 token"}), 403
 
     remote_path = info["remote_path"]
+
+    # xlsx 文件：远程 openpyxl 解析后返回结构化数据
+    if remote_path.endswith((".xlsx", ".xls")):
+        return _preview_xlsx(remote_path)
+
+    # 其他二进制格式不支持预览
+    if remote_path.endswith((".zip", ".gz", ".rar")):
+        return jsonify({"format": "binary", "filename": remote_path.rsplit("/", 1)[-1]})
 
     # 读取前 500 行
     out, _, rc = ssh_exec(f"head -500 '{remote_path}' 2>/dev/null", timeout=15)
@@ -782,9 +860,9 @@ def api_action(platform, campaign_id, action):
             config_path = f"{pconf['campaigns_dir']}/{campaign_id}/campaign.json"
 
             if action == "start":
-                # 后台启动监控
+                # 后台启动监控（</dev/null 确保 stdin 立即关闭，避免 SSH 会话挂起）
                 cmd = (f"cd {pconf['base']} && nohup python3 -u {pconf['monitor_script']} "
-                       f"--config {config_path} > /dev/null 2>&1 & echo $!")
+                       f"--config {config_path} </dev/null > /dev/null 2>&1 & echo $!")
                 out, _, rc = ssh_exec(cmd, timeout=10)
                 if rc == 0 and out.strip():
                     return jsonify({"success": True, "pid": int(out.strip())})
@@ -809,7 +887,7 @@ def api_action(platform, campaign_id, action):
 
             if action == "start":
                 cmd = (f"cd {pconf['base']} && nohup python3 -u {pconf['monitor_script']} "
-                       f"--config {config_path} > /dev/null 2>&1 & echo $!")
+                       f"--config {config_path} </dev/null > /dev/null 2>&1 & echo $!")
                 out, _, rc = ssh_exec(cmd, timeout=10)
                 if rc == 0 and out.strip():
                     return jsonify({"success": True, "pid": int(out.strip())})
@@ -840,7 +918,7 @@ def api_action(platform, campaign_id, action):
                 cmd = (f"cd {pconf['base']} && nohup python3 -u {pconf['monitor_script']} "
                        f"--pro_id {pro_ids} --folder {folder_path} "
                        f"--sources '{sources}' --end_time '{end_time}' "
-                       f"> /dev/null 2>&1 & echo $!")
+                       f"</dev/null > /dev/null 2>&1 & echo $!")
                 out, _, rc = ssh_exec(cmd, timeout=10)
                 if rc == 0 and out.strip():
                     return jsonify({"success": True, "pid": int(out.strip())})
@@ -851,9 +929,9 @@ def api_action(platform, campaign_id, action):
                 if pid:
                     ssh_exec(f"kill {pid} 2>/dev/null", timeout=5)
                     info["pid"] = 0
-                    json_str = json.dumps(info, ensure_ascii=False, indent=2)
-                    # 用 python3 写回避免 heredoc 问题
-                    ssh_exec(f"python3 -c \"import json; open('{folder_path}/info.json','w').write(json.dumps({json_str}, ensure_ascii=False, indent=2))\"", timeout=10)
+                    import base64
+                    b64 = base64.b64encode(json.dumps(info, ensure_ascii=False, indent=2).encode("utf-8")).decode()
+                    ssh_exec(f"echo '{b64}' | base64 -d > '{folder_path}/info.json'", timeout=10)
                     return jsonify({"success": True})
                 return jsonify({"success": False, "error": "进程未运行"})
 
@@ -874,14 +952,53 @@ def api_set_deadline(platform, campaign_id):
         if platform == "kms":
             cfg_path = f"{REMOTE_PATHS['kms']['campaigns_dir']}/{campaign_id}/campaign.json"
             cfg = ssh_read_json(cfg_path)
+            if not cfg:
+                return jsonify({"success": False, "error": f"读取远程配置失败: {cfg_path}"})
             cfg["stop_monitor_at"] = deadline
-            json_str = json.dumps(cfg, ensure_ascii=False, indent=2)
-            # 用 python3 写远程文件
-            out, _, rc = ssh_exec(
-                f"python3 -c \"import json; open('{cfg_path}','w').write(json.loads('{json_str.replace(chr(39), chr(92)+chr(39))}'))\"",
+            # 用 base64 编码避免特殊字符问题（与 k4/imini 统一）
+            import base64
+            b64 = base64.b64encode(json.dumps(cfg, ensure_ascii=False, indent=2).encode("utf-8")).decode()
+            out, err, rc = ssh_exec(
+                f"echo '{b64}' | base64 -d > '{cfg_path}'",
                 timeout=10
             )
-            return jsonify({"success": rc == 0})
+            if rc != 0:
+                return jsonify({"success": False, "error": f"SSH 写入失败 (rc={rc}): {err[:200]}"})
+            return jsonify({"success": True})
+
+        elif platform == "k4":
+            cfg_path = f"{REMOTE_PATHS['k4']['campaigns_dir']}/{campaign_id}/campaign.json"
+            cfg = ssh_read_json(cfg_path)
+            if not cfg:
+                return jsonify({"success": False, "error": f"读取远程配置失败: {cfg_path}"})
+            cfg["stop_monitor_at"] = deadline
+            tmp_json = json.dumps(cfg, ensure_ascii=False, indent=2)
+            import base64
+            b64 = base64.b64encode(tmp_json.encode("utf-8")).decode()
+            out, err, rc = ssh_exec(
+                f"echo '{b64}' | base64 -d > '{cfg_path}'",
+                timeout=10
+            )
+            if rc != 0:
+                return jsonify({"success": False, "error": f"SSH 写入失败 (rc={rc}): {err[:200]}"})
+            return jsonify({"success": True})
+
+        elif platform == "imini":
+            info_path = f"{REMOTE_PATHS['imini']['monitors_dir']}/{campaign_id}/info.json"
+            info = ssh_read_json(info_path)
+            if not info:
+                return jsonify({"success": False, "error": f"读取远程配置失败: {info_path}"})
+            info["end_time"] = deadline
+            tmp_json = json.dumps(info, ensure_ascii=False, indent=2)
+            import base64
+            b64 = base64.b64encode(tmp_json.encode("utf-8")).decode()
+            out, err, rc = ssh_exec(
+                f"echo '{b64}' | base64 -d > '{info_path}'",
+                timeout=10
+            )
+            if rc != 0:
+                return jsonify({"success": False, "error": f"SSH 写入失败 (rc={rc}): {err[:200]}"})
+            return jsonify({"success": True})
 
         elif platform == "k4":
             cfg_path = f"{REMOTE_PATHS['k4']['campaigns_dir']}/{campaign_id}/campaign.json"
@@ -941,7 +1058,7 @@ def api_delete(platform, campaign_id):
             folder = f"{REMOTE_PATHS['k4']['campaigns_dir']}/{campaign_id}"
             out, _, rc = ssh_exec(f"test -d '{folder}' && echo exists", timeout=5)
             if "exists" in out:
-                # 先停进程
+                # 有文件夹的正式监控：先停进程再删目录
                 pid_str = ssh_read_file(f"{folder}/runtime/monitor.pid")
                 if pid_str:
                     try:
@@ -952,20 +1069,44 @@ def api_delete(platform, campaign_id):
                         pass
                 ssh_exec(f"rm -rf '{folder}'", timeout=15)
             else:
-                # 可能是 scan_only 的记录，尝试从 events 里清理
-                pass
+                # scan_only 记录：从 events/*.json 中删除对应 campaign_id 的条目
+                events_dir = REMOTE_PATHS['k4'].get("events_dir", "/root/k4/events")
+                safe_id = campaign_id.replace("'", "'\\''")
+                script = (
+                    "import json,os,glob\n"
+                    f"for f in glob.glob('{events_dir}/k4_scan_*.json'):\n"
+                    "    data=json.load(open(f))\n"
+                    f"    data=[x for x in data if x.get('campaign_id','')!='{safe_id}']\n"
+                    "    json.dump(data,open(f,'w'),ensure_ascii=False,indent=2)\n"
+                )
+                # 用 stdin pipe 传脚本，避免 shell 截断长命令
+                result = subprocess.run(
+                    _ssh_base_args() + ["python3 -"],
+                    input=script, capture_output=True, text=True, timeout=15,
+                )
+                if result.returncode != 0:
+                    return jsonify({"success": False, "error": f"远程删除失败: {result.stderr[:200]}"})
 
         elif platform == "imini":
             folder = f"{REMOTE_PATHS['imini']['monitors_dir']}/{campaign_id}"
             out, _, rc = ssh_exec(f"test -d '{folder}' && echo exists", timeout=5)
             if "exists" in out:
-                # 先停进程
+                # 有文件夹的正式监控：先停进程再删目录
                 info = ssh_read_json(f"{folder}/info.json")
                 pid = info.get("pid", 0)
                 if pid:
                     ssh_exec(f"kill {pid} 2>/dev/null", timeout=5)
                 ssh_exec(f"rm -rf '{folder}'", timeout=15)
-            # scan_only 的记录没有文件夹，无法删除
+            else:
+                # scan_only 记录：没有文件夹，需要从 scan.log 中删除对应行
+                import re
+                scan_log_path = REMOTE_PATHS["imini"].get("scan_log", "/root/imini/scan.log")
+                # 用 sed 删除包含该 pro_id 的扫描记录行（匹配 pro_id=XXX 的行及其上下文）
+                safe_id = campaign_id.replace("'", "'\\''")
+                ssh_exec(
+                    f"sed -i '/pro_id={safe_id}/d' '{scan_log_path}'",
+                    timeout=10
+                )
         else:
             return jsonify({"success": False, "error": "未知平台"}), 400
 

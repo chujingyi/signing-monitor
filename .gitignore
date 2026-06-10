@@ -40,3 +40,8 @@ kms/*.log
 **/.claude/
 **/.workbuddy/
 *.docx
+
+# 工作截图与临时文件
+.temp/
+*.png
+snapshot-preview-modal.txt
